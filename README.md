@@ -5,7 +5,7 @@ Requirements:
 - npm
 - nodejs
 - discordjs
-- yt-dlp
+- ytdl-core
 - ffmpeg
 - dotenv
 - libsodium-wrappers
