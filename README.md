@@ -1,5 +1,5 @@
 # MusicBot
-A stupid discord music bot, not even close to be finished
+A stupid discord music bot, not even close to be finished. I made it for the only purpose of practicing.
 
 Requirements:
 - npm
