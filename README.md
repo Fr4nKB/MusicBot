@@ -9,5 +9,6 @@ Requirements:
 - ffmpeg
 - dotenv
 - libsodium-wrappers
+- fluent-ffmpeg
 
 Installation: TBC
