@@ -1,46 +1,91 @@
 //import dependencies
 const { config } = require('dotenv');
-const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } = require('discord.js');
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, createComponent } = require('discord.js');
 const { fork } = require('child_process');
-const { AudioPlayerStatus, createAudioPlayer, createAudioResource, joinVoiceChannel }  = require('@discordjs/voice');
+const { AudioPlayerStatus, createAudioPlayer, createAudioResource, joinVoiceChannel, VoiceConnectionStatus }  = require('@discordjs/voice');
 const ytdl = require('ytdl-core');
+const fluentFfmpeg = require('fluent-ffmpeg');
 config();
 
-const yturl = 'https://www.youtube.com/watch?v=';
+var currentSong;    //URL for the current song
+var currentSongDuration;    //duration in seconds of the current song
+var currentSecPlayed;   //how many seconds of the current song have been played
+var time;   //interval to update currentSecPlayed
 var voiceConnection = null;
 var player = createAudioPlayer();
 var resource = null;
 var list = new Array();
+var interactionCollector = new Array();
+var guild, member;
 const client = new Client({ intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildVoiceStates] });
+    GatewayIntentBits.GuildVoiceStates
+] });
 const rest = new REST({version: '10'}).setToken(process.env.TOKEN);
 
-//listener: event, function
 client.on('ready', () => {
     console.log("Online");
+});
+
+//tries to recover the current song and play from where it interrupted
+player.on('error', (error) => {
+    clearInterval(time);
+    console.log('Player crashed');
+    if(!player) player = createAudioPlayer();
+    if(voiceConnection) {
+        voiceConnection.subscribe(player);
+        var stream = null;
+        while(!stream) {
+            stream = ytdl(currentSong, { filter: 'audioonly', quality: 'lowestaudio', highWaterMark: 1<<25 } );
+        }
+        //reproducing the song where it stopped
+        var editedSong = fluentFfmpeg({source: stream}).toFormat('mp3').setStartTime(currentSecPlayed);
+        resource = createAudioResource(editedSong, { highWaterMark: 1 });
+        player.play(resource);
+        time = setInterval(function () { currentSecPlayed += 1; }, 1000);
+    }
 });
 
 //child preforked to fetch title and url
 const child = fork('child.js');
 child.on("message", function (message) {
-    //format: Title - SongName-URL.ext
-    var str = message.split('//');
-    var obj = {'name': str.at(0), 'URL': str.at(1)};
+
+    var str = message.split('//');  //format: Title//URL//duration
+    var obj = {'name': str.at(0), 'url': str.at(1), 'duration': str.at(2)};
     list.push(obj);
-    if(list.length == 1 && player.state.status == AudioPlayerStatus.Idle) popFirst();   //command play has been executed and player is in idle
-    else console.log(str.at(0)+' added to the queue');  //something is already playing
+    
+    var pos = interactionCollector.findIndex(element => element.id == list.length);
+    var interaction = interactionCollector.at(pos).interaction;
+
+    if(list.length == 1 && player.state.status == AudioPlayerStatus.Idle) {
+        popFirst();   //command play has been executed and player is in idle
+        interaction.editReply('Riproduco **'+str.at(0)+'**');
+        interactionCollector.splice(pos);
+    }
+    else {
+        console.log(str.at(0)+' added to the queue');  //something is already playing
+        interaction.editReply('**'+str.at(0)+'** aggiunto alla coda');
+        interactionCollector.splice(pos);
+    }
+
 });
 
 //pops the first element of the queue and plays it
 function popFirst() {
     if(list.length > 0) {     //not empty
+
         var next = list.shift();    //pop first element
-        const stream = ytdl(yturl+next.URL, { filter: 'audioonly'} );
-        resource = createAudioResource(stream);
+        currentSong = 'https://'+next.url;
+        currentSongDuration = next.duration;
+        currentSecPlayed = 0;
+        
+        const stream = ytdl(currentSong, { filter: 'audioonly', quality: 'lowestaudio', highWaterMark: 1<<25 } );
+        resource = createAudioResource(stream, { highWaterMark: 1 });
         player.play(resource);
+        time = setInterval(function () { currentSecPlayed += 1; }, 1000);
+        
     }
 }
 
@@ -51,12 +96,18 @@ client.on('interactionCreate', (interaction) => {
 
     if(interaction.isChatInputCommand()) {  //a command has been sent
 
+        interaction.deferReply();
+
         //retrieving infos on the channel
-        const guild = client.guilds.cache.get(process.env.GUILD_ID)
-        const member = guild.members.cache.get(interaction.member.user.id);
+        guild = client.guilds.cache.get(process.env.GUILD_ID)
+        member = guild.members.cache.get(interaction.member.user.id);
         const voiceChannel = member.voice.channel;
+
+        if(!voiceChannel) {
+            interaction.editReply('Per utilizzare il comando play devi prima connetterti in un canale');
+        }
         
-        if(interaction.commandName == 'play') {
+        else if(interaction.commandName == 'play') {
 
             if(voiceConnection == null) {   //bot not conntected
                 voiceConnection = joinVoiceChannel({
@@ -65,31 +116,58 @@ client.on('interactionCreate', (interaction) => {
                     adapterCreator: interaction.guild.voiceAdapterCreator,
                 });
                 voiceConnection.subscribe(player);
+                voiceConnection.on(VoiceConnectionStatus.Disconnected, () => {
+                    voiceConnection = null;
+                });
             }
 
-            var query = interaction.options.get('query').value; //needs sanitization
+            var query = interaction.options.get('query').value;
             console.log('Searching for "'+query+'"');
             child.send(query);
+            var obj = {'id': list.length+1,'interaction': interaction};
+            interactionCollector.push(obj);
 
         }
-        else if(interaction.commandName == 'pause' && player) { player.pause(); }
-        else if(interaction.commandName == 'resume' && player) { player.unpause(); }
-        else if(interaction.commandName == 'skip' && player) popFirst();
+        else if(interaction.commandName == 'pause') {
+            if(player.state.status == AudioPlayerStatus.Playing) {
+                player.pause();
+                interaction.editReply('Brano in pausa');
+            }
+            else interaction.editReply('Prima dovresti riprodurre qualcosa, puoi riprodurre un brano con /play');
+        }
+        else if(interaction.commandName == 'resume') {
+            if(player.state.status == AudioPlayerStatus.Paused) {
+                player.unpause();
+                interaction.editReply('Riproduco');
+            }
+            else interaction.editReply('Nessun brano in pausa, puoi riprodurre un brano con /play');
+        }
+        else if(interaction.commandName == 'skip') {
+            if(list.length > 0) {
+                popFirst();
+                interaction.editReply('Riproduco il prossimo brano in coda');
+            }
+            else interaction.editReply('Non ci sono brani in coda');
+        }
         else if(interaction.commandName == 'queue') {
             if(list.length == 0) {
-                interaction.reply('Queue is empty');
+                interaction.editReply('La coda è vuota');
             }
             else {
                 var str = '';
                 for(i = 0; i < list.length; i++) {
                     str += (i+1)+' - '+list.at(i).name+'\n';
                 }
-                interaction.reply(str);
+                interaction.editReply(str);
             }
         }
-        else if(interaction.commandName == 'stop' && player) {
-            player.stop();
-            resource = null;
+        else if(interaction.commandName == 'stop') {
+            if(player.state.status == AudioPlayerStatus.Playing) {
+                player.stop();
+                resource = null;
+                interaction.editReply('La festa è finita\:triumph:');
+            }
+            else interaction.editReply('Prima dovresti riprodurre qualcosa');
         }
 
     }
