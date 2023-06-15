@@ -13,7 +13,7 @@ Requirements:
 - fluent-ffmpeg
 
 Installation:
-sudo apt install nodejs
-sudo apt install npm
-npm install dotenv
-npm install discord.js
+- sudo apt install nodejs
+- sudo apt install npm
+- npm install dotenv
+- npm install discord.js
