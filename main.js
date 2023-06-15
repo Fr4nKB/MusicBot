@@ -11,10 +11,12 @@ var currentSong;    //URL for the current song
 var currentSongDuration;    //duration in seconds of the current song
 var currentSecPlayed;   //how many seconds of the current song have been played
 var time;   //interval to update currentSecPlayed
+var list = new Array(); //song queue
+
 var voiceConnection = null;
 var player = createAudioPlayer();
 var resource = null;
-var list = new Array();
+
 var interactionCollector = new Array();
 var guild, member;
 const client = new Client({ intents: [
@@ -26,13 +28,13 @@ const client = new Client({ intents: [
 const rest = new REST({version: '10'}).setToken(process.env.TOKEN);
 
 client.on('ready', () => {
-    console.log("Online");
+    console.log("BOT STARTED");
 });
 
 //tries to recover the current song and play from where it interrupted
 player.on('error', (error) => {
     clearInterval(time);
-    console.log('Player crashed');
+    console.log('PLAYER CRASHED');
     if(!player) player = createAudioPlayer();
     if(voiceConnection) {
         voiceConnection.subscribe(player);
@@ -49,13 +51,14 @@ player.on('error', (error) => {
 });
 
 //child preforked to fetch title and url
-const child = fork('child.js');
+const child = fork('songloader.js');
 child.on("message", function (message) {
 
     var str = message.split('//');  //format: Title//URL//duration
     var obj = {'name': str.at(0), 'url': str.at(1), 'duration': str.at(2)};
     list.push(obj);
     
+    //find interaction to later reply
     var pos = interactionCollector.findIndex(element => element.id == list.length);
     var interaction = interactionCollector.at(pos).interaction;
 
@@ -65,7 +68,7 @@ child.on("message", function (message) {
         interactionCollector.splice(pos);
     }
     else {
-        console.log(str.at(0)+' added to the queue');  //something is already playing
+        console.log(str.at(0)+' ADDED TO QUEUE');  //something is already playing
         interaction.editReply('**'+str.at(0)+'** aggiunto alla coda');
         interactionCollector.splice(pos);
     }
