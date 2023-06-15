@@ -3,8 +3,8 @@ A stupid discord music bot, not even close to be finished. I made it for the onl
 Based on discordjs, yt-dlp and ytdl-core.
 
 Requirements:
-- npm
 - nodejs
+- npm
 - discordjs
 - ytdl-core
 - ffmpeg
