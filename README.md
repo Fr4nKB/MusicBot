@@ -12,4 +12,8 @@ Requirements:
 - libsodium-wrappers
 - fluent-ffmpeg
 
-Installation: TBC
+Installation:
+sudo apt install nodejs
+sudo apt install npm
+npm install dotenv
+npm install discord.js
